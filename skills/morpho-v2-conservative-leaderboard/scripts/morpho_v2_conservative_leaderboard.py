@@ -111,7 +111,7 @@ limit = int(os.getenv("LIMIT", "10"))
 first = int(os.getenv("FIRST", "500"))
 skip = int(os.getenv("SKIP", "0"))
 positions_first = int(os.getenv("POSITIONS_FIRST", "50"))
-request_delay_ms = int(os.getenv("REQUEST_DELAY_MS", "0"))
+request_delay_ms = int(os.getenv("REQUEST_DELAY_MS", "100"))
 
 chain_ids = CHAIN_MAP.get(chain)
 if not chain_ids:

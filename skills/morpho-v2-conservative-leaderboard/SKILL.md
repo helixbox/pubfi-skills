@@ -78,7 +78,7 @@ Uses Morpho Vaults V2 GraphQL data to fetch vaults on Ethereum, Base, and Arbitr
 | FIRST | number | 500 | Vault list page size per chain; auto-downgrades on 5xx responses |
 | SKIP | number | 0 | Starting offset for vault list pagination |
 | POSITIONS_FIRST | number | 50 | Max positions per adapter; if returned count hits this limit, vault is excluded (conservative) |
-| REQUEST_DELAY_MS | number | 0 | Delay between requests in milliseconds to reduce 5xx bursts |
+| REQUEST_DELAY_MS | number | 100 | Delay between requests in milliseconds to reduce 5xx bursts |
 
 ## Execution Workflow
 
@@ -213,7 +213,7 @@ link := https://app.morpho.org/{network}/vault/{address}
 ### Step 7: Reference Script (Python)
 ```bash
 # Recommended fast/stable defaults:
-# CHAIN=all LIMIT=10 FIRST=500 POSITIONS_FIRST=50 REQUEST_DELAY_MS=0
+# CHAIN=all LIMIT=10 FIRST=500 POSITIONS_FIRST=50 REQUEST_DELAY_MS=100
 python scripts/morpho_v2_conservative_leaderboard.py
 ```
 
