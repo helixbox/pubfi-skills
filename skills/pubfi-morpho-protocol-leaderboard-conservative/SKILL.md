@@ -1,6 +1,6 @@
 ---
 name: morpho-protocol-leaderboard-conservative
-description: Use when you need a conservative Morpho Vaults leaderboard (Ethereum/Base/Arbitrum) filtered by liquidity >$10M and ranked by net APY from the Morpho GraphQL API.
+description: Use when you need a conservative Morpho Vaults leaderboard (Ethereum/Base/Arbitrum) with exposure-asset allowlist enforcement, filtered by liquidity >$10M and ranked by net APY.
 argument-hint: [optional: chain, optional: limit]
 status: draft
 ---
@@ -11,14 +11,14 @@ status: draft
 
 ## Overview
 
-Uses Morpho Vaults V2 GraphQL data to fetch vaults on Ethereum, Base, and Arbitrum, apply conservative safety and liquidity filters, and rank by Net APY. No mock data is allowed.
+Uses Morpho Vaults V1 (legacy) GraphQL data to fetch vaults on Ethereum, Base, and Arbitrum, enforce strict exposure-asset allowlists, apply conservative safety and liquidity filters, and rank by Net APY. No mock data is allowed.
 
 ## Rules
 
 **Deposit Assets (Canonical):**
 - USDC, USDT, ETH, BTC
 
-**Exposure Assets (Intent):**
+**Exposure Assets (Enforced):**
 - BTC, ETH, WETH, WBTC, cbBTC, cbETH, wstETH, USDS, sUSDS, USDT, USDC
 
 **Safety:**
@@ -26,8 +26,8 @@ Uses Morpho Vaults V2 GraphQL data to fetch vaults on Ethereum, Base, and Arbitr
 - `warnings` must be empty
 
 **Thresholds:**
-- Minimum Liquidity: $10,000,000 USD (use `liquidityUsd`, fallback `totalAssetsUsd`)
-- Net APY: `avgNetApy` > 0
+- Minimum Liquidity: $10,000,000 USD (use `state.totalAssetsUsd`, fallback to `state.totalAssets / 10^asset.decimals` for USDC/USDT)
+- Net APY: `state.netApy` > 0
 
 **Target Chains:**
 - Ethereum (Chain ID: 1)
@@ -56,16 +56,16 @@ Uses Morpho Vaults V2 GraphQL data to fetch vaults on Ethereum, Base, and Arbitr
 5. Define conservative safety gate: whitelisted == true AND warnings.length == 0
 ```
 
-### Step 2: Fetch Data (Vaults V2)
+### Step 2: Fetch Data (Vaults V1 - Legacy)
 ```yaml
 Source: Morpho GraphQL API
 Endpoint: https://api.morpho.org/graphql
 ```
 
-**GraphQL query (V2):**
+**GraphQL query (V1):**
 ```graphql
-query VaultsConservative($chainIds: [Int!], $first: Int!) {
-  vaultV2s(first: $first, where: { chainId_in: $chainIds }) {
+query VaultsConservative($chainIds: [Int!], $first: Int!, $skip: Int!) {
+  vaults(first: $first, skip: $skip, where: { chainId_in: $chainIds }, orderBy: TotalAssetsUsd) {
     items {
       address
       symbol
@@ -73,11 +73,18 @@ query VaultsConservative($chainIds: [Int!], $first: Int!) {
       whitelisted
       warnings { type level }
       chain { id network }
-      asset { decimals }
-      totalAssets
-      totalAssetsUsd
-      liquidityUsd
-      avgNetApy
+      asset { symbol address decimals }
+      state {
+        netApy
+        totalAssets
+        totalAssetsUsd
+        allocation {
+          market {
+            loanAsset { symbol address }
+            collateralAsset { symbol address }
+          }
+        }
+      }
     }
   }
 }
@@ -85,40 +92,44 @@ query VaultsConservative($chainIds: [Int!], $first: Int!) {
 
 **Example variables:**
 ```json
-{ "chainIds": [1, 8453, 42161], "first": 200 }
+{ "chainIds": [1, 8453, 42161], "first": 200, "skip": 0 }
 ```
 
 **If `chain=all`, run the query once per chain to avoid timeouts, then merge results.**
 
-**If a chain returns exactly 200 items, consider pagination or a larger `first` for that chain.**
+**If a chain returns exactly `first` items, paginate with `skip` (e.g., `skip=200`) or increase `first` for that chain.**
 
 ### Step 3: Normalize and Filter
 ```yaml
 Normalization:
-  - liquidityUsd := liquidityUsd ?? totalAssetsUsd
-  - if liquidityUsd is null AND depositAsset in [USDC, USDT]:
-      liquidityUsd := totalAssets / (10 ^ asset.decimals)
-  - if liquidityUsd is still null, exclude (cannot verify $10M threshold)
-  - netApyPct := avgNetApy * 100
-  - depositAsset := infer from symbol/name (uppercase):
+  - depositAsset := asset.symbol (uppercase), fallback to infer from vault symbol/name:
       * if contains USDC -> USDC
       * else if contains USDT -> USDT
       * else if contains WBTC or CBBTC or BTC -> BTC
       * else if contains WSTETH or CBETH or WETH or ETH -> ETH
       * else -> UNKNOWN (exclude)
+  - exposureAssets := unique set of allocation.market.loanAsset.symbol + allocation.market.collateralAsset.symbol (uppercase)
+  - if any allocation market is missing a symbol, exclude (unknown exposure)
+  - if exposureAssets is empty, exclude
+  - liquidityUsd := state.totalAssetsUsd
+  - if liquidityUsd is null AND depositAsset in [USDC, USDT]:
+      liquidityUsd := state.totalAssets / (10 ^ asset.decimals)
+  - if liquidityUsd is still null, exclude (cannot verify $10M threshold)
+  - netApyPct := state.netApy * 100
 
 Filtering:
   - whitelisted == true
   - warnings.length == 0
   - liquidityUsd >= 10_000_000
-  - avgNetApy > 0
+  - state.netApy > 0
   - depositAsset in [USDC, USDT, ETH, BTC]
+  - exposureAssets ⊆ [BTC, ETH, WETH, WBTC, cbBTC, cbETH, wstETH, USDS, sUSDS, USDT, USDC]
 ```
 
 ### Step 4: Sort and Rank
 ```yaml
 Sorting:
-  - Primary: avgNetApy (descending)
+  - Primary: state.netApy (descending)
   - Secondary: liquidityUsd (descending)
 
 Take:
@@ -134,14 +145,14 @@ link := https://app.morpho.org/{network}/vault/{address}
 ### Step 6: Reference Script (Python)
 ```bash
 # Optional: run end-to-end without guessing
-# CHAIN=all LIMIT=10 FIRST=200
+# CHAIN=all LIMIT=10 FIRST=200 SKIP=0
 python - <<'PY'
 import json, os, sys, urllib.request
 from datetime import datetime, timezone
 
 QUERY = """
-query VaultsConservative($chainIds: [Int!], $first: Int!) {
-  vaultV2s(first: $first, where: { chainId_in: $chainIds }) {
+query VaultsConservative($chainIds: [Int!], $first: Int!, $skip: Int!) {
+  vaults(first: $first, skip: $skip, where: { chainId_in: $chainIds }, orderBy: TotalAssetsUsd) {
     items {
       address
       symbol
@@ -149,11 +160,18 @@ query VaultsConservative($chainIds: [Int!], $first: Int!) {
       whitelisted
       warnings { type level }
       chain { id network }
-      asset { decimals }
-      totalAssets
-      totalAssetsUsd
-      liquidityUsd
-      avgNetApy
+      asset { symbol address decimals }
+      state {
+        netApy
+        totalAssets
+        totalAssetsUsd
+        allocation {
+          market {
+            loanAsset { symbol address }
+            collateralAsset { symbol address }
+          }
+        }
+      }
     }
   }
 }
@@ -166,9 +184,13 @@ CHAIN_MAP = {
     "all": [1, 8453, 42161],
 }
 
+DEPOSIT_ALLOWLIST = {"USDC", "USDT", "ETH", "BTC"}
+EXPOSURE_ALLOWLIST = {"BTC", "ETH", "WETH", "WBTC", "CBBTC", "CBETH", "WSTETH", "USDS", "SUSDS", "USDT", "USDC"}
+
 chain = os.getenv("CHAIN", "all").lower()
 limit = int(os.getenv("LIMIT", "10"))
 first = int(os.getenv("FIRST", "200"))
+skip = int(os.getenv("SKIP", "0"))
 chain_ids = CHAIN_MAP.get(chain)
 if not chain_ids:
     raise SystemExit("Invalid CHAIN. Use: ethereum, base, arbitrum, all")
@@ -186,7 +208,7 @@ def infer_deposit_asset(symbol: str, name: str):
     return None
 
 def fetch(chain_id: int):
-    payload = json.dumps({"query": QUERY, "variables": {"chainIds": [chain_id], "first": first}}).encode("utf-8")
+    payload = json.dumps({"query": QUERY, "variables": {"chainIds": [chain_id], "first": first, "skip": skip}}).encode("utf-8")
     req = urllib.request.Request(
         "https://api.morpho.org/graphql",
         data=payload,
@@ -196,9 +218,9 @@ def fetch(chain_id: int):
         data = json.load(resp)
     if "errors" in data:
         raise RuntimeError(data["errors"])
-    items = data["data"]["vaultV2s"]["items"]
+    items = data["data"]["vaults"]["items"]
     if len(items) == first:
-        print(f"Warning: chain {chain_id} returned {first} items; consider pagination.", file=sys.stderr)
+        print(f"Warning: chain {chain_id} returned {first} items; consider pagination with SKIP.", file=sys.stderr)
     return items
 
 items = []
@@ -211,26 +233,48 @@ for v in items:
         continue
     if v.get("warnings"):
         continue
-    deposit = infer_deposit_asset(v.get("symbol"), v.get("name"))
-    if deposit not in {"USDC", "USDT", "ETH", "BTC"}:
+    asset = v.get("asset") or {}
+    deposit = (asset.get("symbol") or "").upper() or infer_deposit_asset(v.get("symbol"), v.get("name"))
+    if deposit not in DEPOSIT_ALLOWLIST:
         continue
-    liquidity = v.get("liquidityUsd") or v.get("totalAssetsUsd")
+
+    state = v.get("state") or {}
+    allocation = state.get("allocation") or []
+    exposures = set()
+    unknown_exposure = False
+    for a in allocation:
+        market = (a or {}).get("market") or {}
+        for key in ("loanAsset", "collateralAsset"):
+            sym = ((market.get(key) or {}).get("symbol") or "").upper()
+            if not sym:
+                unknown_exposure = True
+                continue
+            exposures.add(sym)
+    if unknown_exposure or not exposures:
+        continue
+    if not exposures.issubset(EXPOSURE_ALLOWLIST):
+        continue
+
+    liquidity = state.get("totalAssetsUsd")
     if liquidity is None and deposit in ("USDC", "USDT"):
-        decimals = (v.get("asset") or {}).get("decimals") or 0
-        total_assets = v.get("totalAssets")
+        decimals = asset.get("decimals") or 0
+        total_assets = state.get("totalAssets")
         if total_assets is not None:
             liquidity = total_assets / (10 ** decimals)
     if liquidity is None or liquidity < 10_000_000:
         continue
-    avg_net_apy = v.get("avgNetApy")
-    if avg_net_apy is None or avg_net_apy <= 0:
+
+    net_apy = state.get("netApy")
+    if net_apy is None or net_apy <= 0:
         continue
+
     results.append({
         "name": v.get("name") or v.get("symbol"),
         "symbol": v.get("symbol"),
-        "chain": v.get("chain", {}).get("network"),
+        "chain": (v.get("chain") or {}).get("network"),
         "deposit": deposit,
-        "net_apy_pct": avg_net_apy * 100,
+        "exposures": sorted(exposures),
+        "net_apy_pct": net_apy * 100,
         "liquidity": liquidity,
         "address": v.get("address"),
     })
@@ -248,12 +292,17 @@ print("\n---\n")
 print("## Top Vaults\n")
 print("| Rank | Vault | Deposit Asset | Chain | Net APY | Liquidity | Exposure | Link |")
 print("|------|-------|---------------|-------|---------|-----------|----------|------|")
-for i, r in enumerate(results, 1):
-    chain_slug = (r['chain'] or '').lower()
-    link = f"https://app.morpho.org/{chain_slug}/vault/{r['address']}"
-    print(f"| {i} | {r['name']} | {r['deposit']} | {r['chain']} | {r['net_apy_pct']:.2f}% | ${r['liquidity']/1e6:.1f}M | N/A (V2) | {link} |")
+if not results:
+    print("| - | No vaults matched filters | - | - | - | - | - | - |")
+else:
+    for i, r in enumerate(results, 1):
+        chain_slug = (r['chain'] or '').lower()
+        link = f"https://app.morpho.org/{chain_slug}/vault/{r['address']}"
+        exposure_str = ", ".join(r["exposures"])
+        print(f"| {i} | {r['name']} | {r['deposit']} | {r['chain']} | {r['net_apy_pct']:.2f}% | ${r['liquidity']/1e6:.1f}M | {exposure_str} | {link} |")
 PY
 ```
+
 
 ## Output Format
 
@@ -270,8 +319,8 @@ PY
 
 | Rank | Vault | Deposit Asset | Chain | Net APY | Liquidity | Exposure | Link |
 |------|-------|---------------|-------|---------|-----------|----------|------|
-| 1 | Example Vault A | USDC | Ethereum | 4.75% | $43.4M | N/A (V2) | https://app.morpho.org/ethereum/vault/0x... |
-| 2 | Example Vault B | ETH | Base | 3.92% | $32.1M | N/A (V2) | https://app.morpho.org/base/vault/0x... |
+| 1 | Example Vault A | USDC | Ethereum | 4.75% | $43.4M | USDT, sUSDS | https://app.morpho.org/ethereum/vault/0x... |
+| 2 | Example Vault B | ETH | Base | 3.92% | $32.1M | WETH, wstETH | https://app.morpho.org/base/vault/0x... |
 
 ---
 
@@ -294,10 +343,10 @@ PY
 | GraphQL error | Return error payload and stop |
 | API Timeout | Retry once with exponential backoff |
 | Invalid Chain | Return valid options: ethereum, base, arbitrum, all |
-| No Vaults Found | Return empty table with explanation |
+| No Vaults Found | Return table with a single row: `No vaults matched filters` |
 
 ## Notes
 
-- Exposure assets are not directly available in the Vaults V2 API. The conservative filter is enforced via `whitelisted` and `warnings` instead.
-- `avgNetApy` is a decimal rate; multiply by 100 for percentage output.
-- Prefer `liquidityUsd` and fallback to `totalAssetsUsd` when missing; if both are null, compute USD only for stablecoins using `totalAssets / 10^decimals`.
+- Exposure assets are enforced via V1 `state.allocation.market.loanAsset/collateralAsset`.
+- `state.netApy` is a decimal rate; multiply by 100 for percentage output.
+- Prefer `state.totalAssetsUsd` and fallback to `state.totalAssets / 10^decimals` for USDC/USDT only.
