@@ -52,8 +52,9 @@ Uses Morpho Vaults V1 (legacy) GraphQL data to fetch vaults on Ethereum, Base, a
    - all -> [1, 8453, 42161]
 2. Set result limit (default: 10, max: 100)
 3. If chain == all, plan to query each chain separately and merge results
-4. Define canonical deposit assets: USDC, USDT, ETH, BTC
-5. Define conservative safety gate: whitelisted == true AND warnings.length == 0
+4. Enable pagination with `skip` and `first` (default: `first=200`, `skip=0`) and loop until a page returns `< first` items; optional `max_pages` safety cap
+5. Define canonical deposit assets: USDC, USDT, ETH, BTC
+6. Define conservative safety gate: whitelisted == true AND warnings.length == 0
 ```
 
 ### Step 2: Fetch Data (Vaults V1 - Legacy)
@@ -145,7 +146,7 @@ link := https://app.morpho.org/{network}/vault/{address}
 ### Step 6: Reference Script (Python)
 ```bash
 # Optional: run end-to-end without guessing
-# CHAIN=all LIMIT=10 FIRST=200 SKIP=0
+# CHAIN=all LIMIT=10 FIRST=200 SKIP=0 MAX_PAGES=0   # MAX_PAGES=0 means no cap
 python - <<'PY'
 import json, os, sys, urllib.request
 from datetime import datetime, timezone
@@ -191,6 +192,7 @@ chain = os.getenv("CHAIN", "all").lower()
 limit = int(os.getenv("LIMIT", "10"))
 first = int(os.getenv("FIRST", "200"))
 skip = int(os.getenv("SKIP", "0"))
+max_pages = int(os.getenv("MAX_PAGES", "0"))
 chain_ids = CHAIN_MAP.get(chain)
 if not chain_ids:
     raise SystemExit("Invalid CHAIN. Use: ethereum, base, arbitrum, all")
@@ -208,19 +210,28 @@ def infer_deposit_asset(symbol: str, name: str):
     return None
 
 def fetch(chain_id: int):
-    payload = json.dumps({"query": QUERY, "variables": {"chainIds": [chain_id], "first": first, "skip": skip}}).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.morpho.org/graphql",
-        data=payload,
-        headers={"content-type": "application/json"},
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.load(resp)
-    if "errors" in data:
-        raise RuntimeError(data["errors"])
-    items = data["data"]["vaults"]["items"]
-    if len(items) == first:
-        print(f"Warning: chain {chain_id} returned {first} items; consider pagination with SKIP.", file=sys.stderr)
+    items = []
+    page = 0
+    while True:
+        if max_pages > 0 and page >= max_pages:
+            print(f"Warning: chain {chain_id} hit MAX_PAGES={max_pages}. Consider increasing.", file=sys.stderr)
+            break
+        offset = skip + page * first
+        payload = json.dumps({"query": QUERY, "variables": {"chainIds": [chain_id], "first": first, "skip": offset}}).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.morpho.org/graphql",
+            data=payload,
+            headers={"content-type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.load(resp)
+        if "errors" in data:
+            raise RuntimeError(data["errors"])
+        batch = data["data"]["vaults"]["items"]
+        items.extend(batch)
+        if len(batch) < first:
+            break
+        page += 1
     return items
 
 items = []
@@ -288,8 +299,11 @@ print("")
 print("> Top Vaults by Net APY")
 print(f"> Chains: {chain.title()} | Updated: {ts}")
 print("> Filters: Liquidity >$10M USD | whitelisted only | no warnings")
-print("\n---\n")
-print("## Top Vaults\n")
+print("
+---
+")
+print("## Top Vaults
+")
 print("| Rank | Vault | Deposit Asset | Chain | Net APY | Liquidity | Exposure | Link |")
 print("|------|-------|---------------|-------|---------|-----------|----------|------|")
 if not results:
@@ -302,6 +316,7 @@ else:
         print(f"| {i} | {r['name']} | {r['deposit']} | {r['chain']} | {r['net_apy_pct']:.2f}% | ${r['liquidity']/1e6:.1f}M | {exposure_str} | {link} |")
 PY
 ```
+
 
 
 ## Output Format

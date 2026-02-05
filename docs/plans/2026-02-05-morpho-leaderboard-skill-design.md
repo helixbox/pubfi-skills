@@ -16,7 +16,7 @@ Choose **Option 1**. Use Vaults V1 and enforce exposure allowlist using allocati
 
 ## Data Flow
 1. Accept `chain` and `limit` params. Map `chain` to chain IDs and network strings.
-2. Run GraphQL queries against `https://api.morpho.org/graphql` using `vaults` per chain (Ethereum/Base/Arbitrum) to avoid timeouts; use `first: 200` and `skip: 0` per chain and merge results.
+2. Run GraphQL queries against `https://api.morpho.org/graphql` using `vaults` per chain (Ethereum/Base/Arbitrum) to avoid timeouts; use `first: 200` and paginate `skip` until a page returns `< first` items (optional max-pages safety cap), then merge results.
 3. Normalize each vault: compute `liquidityUsd` (`state.totalAssetsUsd`, fallback to `state.totalAssets / 10^decimals` for USDC/USDT), compute `netApyPct = state.netApy * 100`, determine `depositAsset` from `asset.symbol` (fallback to symbol/name inference). Build `exposureAssets` from allocation markets’ loan/collateral asset symbols.
 4. Filter by `whitelisted == true`, `warnings.length == 0`, `liquidityUsd >= 10_000_000`, `state.netApy > 0`, deposit asset in allowlist, and **all exposure assets** in the exposure allowlist.
 5. Sort by net APY descending, then liquidity descending, then take top `limit`.
