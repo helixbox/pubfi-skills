@@ -30,55 +30,86 @@ python3 zerion-portfolio.py <address> --only-defi
 
 ## Execution Workflow
 
-### Step 1: Fetch Portfolio Data
+### Step 1: Validate Input
+```yaml
+1. Check address format: 0x + 40 hex characters
+2. If invalid format: Exit with error message
+```
 
+### Step 2: Fetch Portfolio Data
 ```bash
+# Execute Zerion portfolio script
 python3 skills/pubfi-wallet-portfolio-analysis/zerion-portfolio.py <address>
 ```
 
-Parse JSON response to extract:
-- Token holdings (symbol, quantity, USD value, chain)
-- DeFi positions (protocol, position type, value)
-- Total portfolio value
+**Handle Edge Cases:**
+- Empty wallet → Report "Empty wallet"
+- API failure → Exit with error, cannot proceed
+- Zero-value positions → Skip
 
-### Step 2: Categorize Assets
+### Step 3: Categorize Assets
+```yaml
+Group by type:
+  Native: ETH, MATIC, BNB, etc.
+  Stablecoins: USDC, USDT, DAI, USDS
+  DeFi Positions: Has protocol attribute + position_type != 'wallet'
+  Other Tokens: Everything else
 
-Group assets into:
-- **Native tokens**: ETH, MATIC, etc.
-- **Stablecoins**: USDC, USDT, DAI, USDS
-- **DeFi protocol tokens**: Identified by protocol involvement
-- **Other tokens**: Everything else
+Track total value per category for distribution percentages
+```
 
-### Step 3: Risk Assessment
+### Step 4: Identify DeFi Protocols
+```yaml
+For each DeFi position:
+  1. Extract protocol name from attributes.protocol
+  2. Identify position type (Lending/Staking/LP/etc.)
+  3. Record position value and percentage of portfolio
+  4. Create list of unique protocols for risk assessment
+```
 
-For each DeFi protocol position, check:
+### Step 5: Risk Assessment (DeFi Protocols Only)
+```yaml
+For each identified protocol:
+  
+  A. Fetch Protocol Data (parallel):
+     - DefiLlama API: curl "https://api.llama.fi/protocol/{slug}"
+     - Extract TVL, chains, audit info, category
+  
+  B. Check Recent Exploits:
+     - Search rekt.news for protocol name
+     - Filter last 90 days
+     - Record any incidents
+  
+  C. Calculate Risk Score:
+     Risk = Base + Events + Audit + TVL Trend
+     
+     Factors:
+     - No audit: +5
+     - Recent exploit (90 days): +5
+     - TVL drop >50% (30 days): +3
+     - TVL drop 20-50%: +2
+     - New protocol (<6 months): +2
+     - Single audit: +1
+     - Multiple audits: -2
+     - Battle-tested (>1 year): -1
+  
+  D. Assign Risk Level:
+     - Score > 7: 🔴 High Risk
+     - Score 4-7: 🟡 Medium Risk
+     - Score < 4: 🟢 Low Risk
+  
+  E. Error Handling:
+     - DefiLlama fails: Mark TVL as "N/A", continue
+     - Rekt.news unavailable: Mark exploits as "Unknown"
 
-**High-Risk Indicators** (🔴):
-- Recent exploit (last 90 days) - check rekt.news
-- No audit or failed audit
-- TVL drop >50% in 30 days
-- Known governance issues
+Known Safe Protocols (auto 🟢):
+  - Aave V2/V3, Uniswap V2/V3, Compound V2/V3
+  - Lido, Curve, MakerDAO/Sky
+```
 
-**Medium-Risk Indicators** (🟡):
-- Single audit only
-- New protocol (<6 months)
-- TVL drop 20-50% in 30 days
-- Centralized control
+### Step 6: Generate Report
 
-**Low-Risk Indicators** (🟢):
-- Multiple audits from reputable firms
-- Battle-tested (>1 year)
-- Stable/growing TVL
-- Decentralized governance
-
-**Data Sources for Risk**:
-- DefiLlama API: `https://api.llama.fi/protocol/{slug}`
-- Rekt.news: Recent exploits
-- Protocol documentation: Audit reports
-
-### Step 4: Generate Report
-
-Output concise markdown report.
+Output structured markdown report following the Output Format section below.
 
 ---
 
@@ -123,17 +154,19 @@ Chain | Asset | Type | Amount | Value | % Portfolio
 
 ### 5) DeFi Exposure
 
-For each protocol:
+For each protocol with 🟡 Medium or 🔴 High risk only (skip 🟢 Low risk):
 
 ```
 Protocol Name (Chain)
 • Position Value: $XXX (XX% of portfolio)
 • Position Type: Lending/Staking/LP/etc.
-• Risk: 🟢/🟡/🔴
+• Risk: 🟡/🔴
 • TVL: $XXX (DefiLlama)
 • Audit: Yes/No (auditor names)
 • Recent Issues: None / [describe]
 ```
+
+If all protocols are low risk, output: "All DeFi positions are in low-risk protocols (🟢)"
 
 ### 6) Risk Summary
 
@@ -156,46 +189,6 @@ Protocol Name (Chain)
 
 ---
 
-## Risk Assessment Rules
-
-### Known High-Risk Protocols (as of 2026-02)
-
-Update this list based on recent events:
-- Check rekt.news for exploits in last 90 days
-- Cross-reference with DefiLlama TVL changes
-
-### Known Safe Protocols
-
-Well-established, audited protocols:
-- Aave V2/V3
-- Uniswap V2/V3
-- Compound V2/V3
-- Lido
-- Curve
-- MakerDAO/Sky
-
-### Protocol Risk Scoring
-
-```
-Risk Score = Base Risk + Recent Events + Audit Status + TVL Trend
-
-High Risk (🔴): Score > 7
-Medium Risk (🟡): Score 4-7  
-Low Risk (🟢): Score < 4
-
-Factors:
-- No audit: +5
-- Recent exploit: +5
-- TVL drop >50%: +3
-- TVL drop 20-50%: +2
-- New protocol (<6 months): +2
-- Single audit: +1
-- Multiple audits: -2
-- Battle-tested (>1 year): -1
-```
-
----
-
 ## Quality Standards
 
 **Conciseness**:
@@ -215,55 +208,10 @@ Factors:
 
 ---
 
-## Implementation Notes
-
-### Step-by-Step Execution
-
-1. **Validate input**: Check address format (0x + 40 hex chars)
-
-2. **Fetch data**:
-   ```bash
-   python3 skills/pubfi-wallet-portfolio-analysis/zerion-portfolio.py $ADDRESS > portfolio.json
-   ```
-
-3. **Parse positions**: Extract from JSON
-   - Iterate through `data[]` array
-   - Get `attributes.fungible_info.symbol`
-   - Get `attributes.value` (USD)
-   - Get `attributes.chain_id`
-   - Get `attributes.quantity`
-
-4. **Identify protocols**: 
-   - Look for known DeFi token addresses
-   - Check symbol patterns (aUSDC, stETH, etc.)
-   - Use position complexity from Zerion
-
-5. **Fetch protocol data** (parallel):
-   ```bash
-   curl -s "https://api.llama.fi/protocol/{slug}"
-   ```
-
-6. **Check recent exploits**:
-   - Scan rekt.news for protocol names
-   - Last 90 days only
-
-7. **Calculate risk scores**: Apply scoring rules
-
-8. **Generate report**: Follow output format exactly
-
-### Error Handling
-
-- If Zerion API fails: Report error, cannot proceed
-- If DefiLlama fails: Mark TVL as "N/A", continue
-- If no DeFi positions: Skip DeFi section, report as "No DeFi exposure"
-- If zero balance: Report as "Empty wallet"
-
----
-
 ## Update Frequency
 
 - **Risk database**: Update monthly with rekt.news
-- **Known protocols**: Update as new major protocols launch
+- **Known protocols**: Update as new major protocols launch  
 - **Audit status**: Verify quarterly
 
 Last updated: 2026-02-05
