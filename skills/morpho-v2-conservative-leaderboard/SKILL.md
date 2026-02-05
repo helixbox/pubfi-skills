@@ -1,5 +1,5 @@
 ---
-name: morpho-protocol-leaderboard-conservative
+name: morpho-v2-conservative-leaderboard
 description: Use when you need a conservative Morpho Vaults leaderboard (Ethereum/Base/Arbitrum) with exposure-asset allowlist enforcement, filtered by liquidity >$10M and ranked by net APY.
 argument-hint: [optional: chain, optional: limit]
 status: draft
@@ -321,6 +321,7 @@ limit = int(os.getenv("LIMIT", "10"))
 first = int(os.getenv("FIRST", "200"))
 skip = int(os.getenv("SKIP", "0"))
 positions_first = int(os.getenv("POSITIONS_FIRST", "200"))
+request_delay_ms = int(os.getenv("REQUEST_DELAY_MS", "0"))
 
 chain_ids = CHAIN_MAP.get(chain)
 if not chain_ids:
@@ -334,19 +335,21 @@ def gql(query, variables):
     req = urllib.request.Request(GRAPHQL, data=payload, headers={"content-type": "application/json"})
     for attempt in range(2):
         try:
+            if request_delay_ms > 0:
+                time.sleep(request_delay_ms / 1000)
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.load(resp)
             if "errors" in data:
                 raise RuntimeError(data["errors"])
             return data["data"]
         except urllib.error.HTTPError as e:
-            if e.code in (502, 503, 504) and attempt == 0:
-                time.sleep(1.5)
+            if e.code in (500, 502, 503, 504) and attempt == 0:
+                time.sleep(1.5 + (attempt * 0.5))
                 continue
             raise
         except urllib.error.URLError:
             if attempt == 0:
-                time.sleep(1.5)
+                time.sleep(1.5 + (attempt * 0.5))
                 continue
             raise
 
@@ -362,12 +365,23 @@ def canonical_deposit(symbol: str) -> str:
 def fetch_vaults(chain_id: int):
     items = []
     page = 0
+    page_size = first
     while True:
-        offset = skip + page * first
-        data = gql(VAULTS_QUERY, {"chainIds": [chain_id], "first": first, "skip": offset})
+        offset = skip + page * page_size
+        try:
+            data = gql(VAULTS_QUERY, {"chainIds": [chain_id], "first": page_size, "skip": offset})
+        except urllib.error.HTTPError as e:
+            if e.code in (500, 502, 503, 504) and page_size > 50:
+                new_size = max(50, page_size // 2)
+                print(f"Warning: vault list query failed on chain {chain_id} with page size {page_size}; retrying with {new_size}", file=sys.stderr)
+                page_size = new_size
+                items = []
+                page = 0
+                continue
+            raise
         batch = data["vaultV2s"]["items"]
         items.extend(batch)
-        if len(batch) < first:
+        if len(batch) < page_size:
             break
         page += 1
     return items
@@ -548,8 +562,9 @@ PY
 | Error | Action |
 |-------|--------|
 | GraphQL error | Return error payload and stop |
-| API Timeout | Retry once with exponential backoff |
+| API Timeout / 5xx | Retry once with backoff |
 | Invalid Chain | Return valid options: ethereum, base, arbitrum, all |
+| Vault list 5xx | Reduce page size and restart chain pagination |
 | Unknown adapter type | Exclude vault (conservative) |
 | No Vaults Found | Return table with a single row: `No vaults matched filters` |
 
@@ -557,6 +572,8 @@ PY
 
 - Exposure assets are enforced via V2 adapters. `MorphoMarketV1Adapter` uses loan/collateral asset addresses, `MetaMorphoAdapter` is resolved recursively via nested vault adapters.
 - If a MetaMorpho nested vault cannot be queried, the script falls back to the nested vault asset address with a warning.
+- Vault list queries auto-downgrade page size on 5xx responses to improve stability.
+- Set `REQUEST_DELAY_MS` to throttle requests if 5xx persists.
 - `netApy` is a decimal rate; multiply by 100 for percentage output.
 - Prefer `totalAssetsUsd`; fallback to `totalAssets / 10^decimals` for USDC/USDT only.
 - ETH/BTC are represented via their wrapped tokens (WETH/WBTC/cbBTC) in address-based filters.
