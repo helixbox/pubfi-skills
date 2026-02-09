@@ -1,0 +1,38 @@
+{
+  "name": "pubfi-walletconnect-transactions",
+  "version": "1.0.0",
+  "description": "WalletConnect-based blockchain transaction execution skill",
+  "main": "dist/walletconnect_transactions.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/walletconnect_transactions.js",
+    "dev": "ts-node src/walletconnect_transactions.ts",
+    "clean": "rm -rf dist",
+    "prebuild": "npm run clean"
+  },
+  "keywords": [
+    "walletconnect",
+    "ethereum",
+    "blockchain",
+    "web3",
+    "transactions",
+    "defi"
+  ],
+  "author": "PubFi",
+  "license": "MIT",
+  "dependencies": {
+    "@walletconnect/sign-client": "^2.13.0",
+    "ethers": "^6.11.1",
+    "qrcode-terminal": "^0.12.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.16",
+    "@types/qrcode-terminal": "^0.12.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
