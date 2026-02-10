@@ -1,5 +1,5 @@
 ---
-name: morpho-v2-conservative-leaderboard
+name: pubfi-morpho-v2-conservative-leaderboard
 description: Use when you need a conservative Morpho Vaults leaderboard across Ethereum/Base/Arbitrum with strict exposure-asset allowlists and liquidity/whitelist filters.
 ---
 

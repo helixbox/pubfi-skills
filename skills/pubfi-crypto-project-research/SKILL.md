@@ -1,8 +1,6 @@
 ---
-name: crypto-project-research
+name: pubfi-crypto-project-research
 description: Generate professional, evidence-backed research reports for crypto projects.
-argument-hint: "project_name | optional: special_requirements"
-status: draft
 ---
 
 # Crypto Project Research (Professional)

@@ -1,8 +1,6 @@
 ---
-name: crypto-daily-report
+name: pubfi-crypto-daily-report
 description: Aggregates crypto news from multiple sources and generates curated daily markdown reports with automated scoring and deduplication.
-argument-hint: [optional: date, optional: limit]
-status: draft
 ---
 
 # Crypto Daily Report

@@ -1,8 +1,6 @@
 ---
-name: wallet-portfolio-analysis
+name: pubfi-wallet-portfolio-analysis
 description: Analyze EVM wallet asset distribution and identify high-risk protocol exposure.
-argument-hint: "wallet_address"
-status: active
 ---
 
 # Wallet Portfolio Analysis
