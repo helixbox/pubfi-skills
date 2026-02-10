@@ -1,7 +1,7 @@
 ---
 name: pubfi-walletconnect-transactions
 description: Use when user wants to connect their wallet via WalletConnect and execute blockchain transactions
-argument-hint: transaction | optional: chain
+argument-hint: "to, amount, optional: chain"
 ---
 
 # PubFi WalletConnect Transactions
