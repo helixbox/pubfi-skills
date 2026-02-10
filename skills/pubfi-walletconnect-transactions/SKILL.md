@@ -1,7 +1,7 @@
 ---
 name: pubfi-walletconnect-transactions
-description: Use when user wants to connect their wallet via WalletConnect and execute blockchain transactions
-argument-hint: "to, amount, optional: chain"
+description: "Use when user wants to send/transfer ETH or ERC20 tokens (USDC, USDT, DAI, etc.) to an address. Supports Ethereum, Polygon, Arbitrum, Optimism, and Base chains. Connects wallet via WalletConnect QR code for transaction signing."
+argument-hint: "recipient address, amount, token (ETH/USDC/USDT), optional: chain (ethereum/polygon/arbitrum/optimism/base)"
 ---
 
 # PubFi WalletConnect Transactions
